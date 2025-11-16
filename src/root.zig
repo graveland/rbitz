@@ -565,24 +565,142 @@ test "roaring bitmap to array" {
 /// Opaque type for roaring64_bitmap_t
 pub const roaring64_bitmap_t = opaque {};
 
+/// Opaque type for roaring64_iterator_t
+pub const roaring64_iterator_t = opaque {};
+
+/// Bulk operation context for 64-bit bitmaps
+pub const roaring64_bulk_context_t = extern struct {
+    high_bytes: [6]u8,
+    leaf: ?*roaring64_leaf_t,
+};
+
+pub const roaring64_leaf_t = u64;
+
 // External C functions from CRoaring for 64-bit bitmaps
 extern "c" fn roaring64_bitmap_create() ?*roaring64_bitmap_t;
 extern "c" fn roaring64_bitmap_free(r: *const roaring64_bitmap_t) void;
+extern "c" fn roaring64_bitmap_copy(r: *const roaring64_bitmap_t) ?*roaring64_bitmap_t;
+extern "c" fn roaring64_bitmap_of_ptr(n_args: usize, vals: [*]const u64) ?*roaring64_bitmap_t;
+extern "c" fn roaring64_bitmap_from_range(min: u64, max: u64, step: u64) ?*roaring64_bitmap_t;
+
 extern "c" fn roaring64_bitmap_add(r: *roaring64_bitmap_t, val: u64) void;
+extern "c" fn roaring64_bitmap_add_checked(r: *roaring64_bitmap_t, val: u64) bool;
+extern "c" fn roaring64_bitmap_add_bulk(r: *roaring64_bitmap_t, context: *roaring64_bulk_context_t, val: u64) void;
+extern "c" fn roaring64_bitmap_add_many(r: *roaring64_bitmap_t, n_args: usize, vals: [*]const u64) void;
+extern "c" fn roaring64_bitmap_add_range(r: *roaring64_bitmap_t, min: u64, max: u64) void;
+extern "c" fn roaring64_bitmap_add_range_closed(r: *roaring64_bitmap_t, min: u64, max: u64) void;
+
+extern "c" fn roaring64_bitmap_remove(r: *roaring64_bitmap_t, val: u64) void;
+extern "c" fn roaring64_bitmap_remove_checked(r: *roaring64_bitmap_t, val: u64) bool;
+extern "c" fn roaring64_bitmap_remove_bulk(r: *roaring64_bitmap_t, context: *roaring64_bulk_context_t, val: u64) void;
+extern "c" fn roaring64_bitmap_remove_many(r: *roaring64_bitmap_t, n_args: usize, vals: [*]const u64) void;
+extern "c" fn roaring64_bitmap_remove_range(r: *roaring64_bitmap_t, min: u64, max: u64) void;
+extern "c" fn roaring64_bitmap_remove_range_closed(r: *roaring64_bitmap_t, min: u64, max: u64) void;
+
+extern "c" fn roaring64_bitmap_clear(r: *roaring64_bitmap_t) void;
 extern "c" fn roaring64_bitmap_contains(r: *const roaring64_bitmap_t, val: u64) bool;
+extern "c" fn roaring64_bitmap_contains_range(r: *const roaring64_bitmap_t, min: u64, max: u64) bool;
+extern "c" fn roaring64_bitmap_contains_bulk(r: *const roaring64_bitmap_t, context: *roaring64_bulk_context_t, val: u64) bool;
+
+extern "c" fn roaring64_bitmap_select(r: *const roaring64_bitmap_t, rank: u64, element: *u64) bool;
+extern "c" fn roaring64_bitmap_rank(r: *const roaring64_bitmap_t, val: u64) u64;
+extern "c" fn roaring64_bitmap_get_index(r: *const roaring64_bitmap_t, val: u64, out_index: *u64) bool;
+
 extern "c" fn roaring64_bitmap_get_cardinality(r: *const roaring64_bitmap_t) u64;
+extern "c" fn roaring64_bitmap_range_cardinality(r: *const roaring64_bitmap_t, min: u64, max: u64) u64;
+extern "c" fn roaring64_bitmap_range_closed_cardinality(r: *const roaring64_bitmap_t, min: u64, max: u64) u64;
 extern "c" fn roaring64_bitmap_is_empty(r: *const roaring64_bitmap_t) bool;
+extern "c" fn roaring64_bitmap_minimum(r: *const roaring64_bitmap_t) u64;
+extern "c" fn roaring64_bitmap_maximum(r: *const roaring64_bitmap_t) u64;
+
+extern "c" fn roaring64_bitmap_run_optimize(r: *roaring64_bitmap_t) bool;
+extern "c" fn roaring64_bitmap_shrink_to_fit(r: *roaring64_bitmap_t) usize;
+
+extern "c" fn roaring64_bitmap_equals(r1: *const roaring64_bitmap_t, r2: *const roaring64_bitmap_t) bool;
+extern "c" fn roaring64_bitmap_is_subset(r1: *const roaring64_bitmap_t, r2: *const roaring64_bitmap_t) bool;
+extern "c" fn roaring64_bitmap_is_strict_subset(r1: *const roaring64_bitmap_t, r2: *const roaring64_bitmap_t) bool;
+
+extern "c" fn roaring64_bitmap_and(r1: *const roaring64_bitmap_t, r2: *const roaring64_bitmap_t) ?*roaring64_bitmap_t;
+extern "c" fn roaring64_bitmap_and_cardinality(r1: *const roaring64_bitmap_t, r2: *const roaring64_bitmap_t) u64;
+extern "c" fn roaring64_bitmap_and_inplace(r1: *roaring64_bitmap_t, r2: *const roaring64_bitmap_t) void;
+extern "c" fn roaring64_bitmap_intersect(r1: *const roaring64_bitmap_t, r2: *const roaring64_bitmap_t) bool;
+extern "c" fn roaring64_bitmap_intersect_with_range(r: *const roaring64_bitmap_t, min: u64, max: u64) bool;
+extern "c" fn roaring64_bitmap_jaccard_index(r1: *const roaring64_bitmap_t, r2: *const roaring64_bitmap_t) f64;
+
+extern "c" fn roaring64_bitmap_or(r1: *const roaring64_bitmap_t, r2: *const roaring64_bitmap_t) ?*roaring64_bitmap_t;
+extern "c" fn roaring64_bitmap_or_cardinality(r1: *const roaring64_bitmap_t, r2: *const roaring64_bitmap_t) u64;
+extern "c" fn roaring64_bitmap_or_inplace(r1: *roaring64_bitmap_t, r2: *const roaring64_bitmap_t) void;
+
+extern "c" fn roaring64_bitmap_xor(r1: *const roaring64_bitmap_t, r2: *const roaring64_bitmap_t) ?*roaring64_bitmap_t;
+extern "c" fn roaring64_bitmap_xor_cardinality(r1: *const roaring64_bitmap_t, r2: *const roaring64_bitmap_t) u64;
+extern "c" fn roaring64_bitmap_xor_inplace(r1: *roaring64_bitmap_t, r2: *const roaring64_bitmap_t) void;
+
+extern "c" fn roaring64_bitmap_andnot(r1: *const roaring64_bitmap_t, r2: *const roaring64_bitmap_t) ?*roaring64_bitmap_t;
+extern "c" fn roaring64_bitmap_andnot_cardinality(r1: *const roaring64_bitmap_t, r2: *const roaring64_bitmap_t) u64;
+extern "c" fn roaring64_bitmap_andnot_inplace(r1: *roaring64_bitmap_t, r2: *const roaring64_bitmap_t) void;
+
+extern "c" fn roaring64_bitmap_flip(r: *const roaring64_bitmap_t, min: u64, max: u64) ?*roaring64_bitmap_t;
+extern "c" fn roaring64_bitmap_flip_closed(r: *const roaring64_bitmap_t, min: u64, max: u64) ?*roaring64_bitmap_t;
+extern "c" fn roaring64_bitmap_flip_inplace(r: *roaring64_bitmap_t, min: u64, max: u64) void;
+extern "c" fn roaring64_bitmap_flip_closed_inplace(r: *roaring64_bitmap_t, min: u64, max: u64) void;
+
+extern "c" fn roaring64_bitmap_to_uint64_array(r: *const roaring64_bitmap_t, ans: [*]u64) void;
+
 extern "c" fn roaring64_bitmap_portable_size_in_bytes(r: *const roaring64_bitmap_t) usize;
 extern "c" fn roaring64_bitmap_portable_serialize(r: *const roaring64_bitmap_t, buf: [*]u8) usize;
 extern "c" fn roaring64_bitmap_portable_deserialize_safe(buf: [*]const u8, maxbytes: usize) ?*roaring64_bitmap_t;
+
+// Iterator functions
+extern "c" fn roaring64_iterator_create(r: *const roaring64_bitmap_t) ?*roaring64_iterator_t;
+extern "c" fn roaring64_iterator_create_last(r: *const roaring64_bitmap_t) ?*roaring64_iterator_t;
+extern "c" fn roaring64_iterator_reinit(r: *const roaring64_bitmap_t, it: *roaring64_iterator_t) void;
+extern "c" fn roaring64_iterator_reinit_last(r: *const roaring64_bitmap_t, it: *roaring64_iterator_t) void;
+extern "c" fn roaring64_iterator_copy(it: *const roaring64_iterator_t) ?*roaring64_iterator_t;
+extern "c" fn roaring64_iterator_free(it: *roaring64_iterator_t) void;
+extern "c" fn roaring64_iterator_has_value(it: *const roaring64_iterator_t) bool;
+extern "c" fn roaring64_iterator_value(it: *const roaring64_iterator_t) u64;
+extern "c" fn roaring64_iterator_advance(it: *roaring64_iterator_t) bool;
+extern "c" fn roaring64_iterator_previous(it: *roaring64_iterator_t) bool;
+extern "c" fn roaring64_iterator_move_equalorlarger(it: *roaring64_iterator_t, val: u64) bool;
+extern "c" fn roaring64_iterator_read(it: *roaring64_iterator_t, buf: [*]u64, count: u64) u64;
 
 /// Roaring64Bitmap is a is a compressed bitmap data structure for 64-bit integers.
 /// https://github.com/RoaringBitmap/RoaringFormatSpec#extension-for-64-bit-implementations
 pub const Roaring64Bitmap = struct {
     ptr: *roaring64_bitmap_t,
 
+    // Initialization functions
+
+    /// init creates a new roaring bitmap
     pub fn init() ?*Roaring64Bitmap {
         const bitmap_ptr = roaring64_bitmap_create() orelse return null;
+        const allocator = std.heap.c_allocator;
+        const self = allocator.create(Roaring64Bitmap) catch return null;
+        self.* = .{ .ptr = bitmap_ptr };
+        return self;
+    }
+
+    /// copy creates a copy of the bitmap
+    pub fn copy(self: *const Roaring64Bitmap) ?*Roaring64Bitmap {
+        const bitmap_ptr = roaring64_bitmap_copy(self.ptr) orelse return null;
+        const allocator = std.heap.c_allocator;
+        const new_self = allocator.create(Roaring64Bitmap) catch return null;
+        new_self.* = .{ .ptr = bitmap_ptr };
+        return new_self;
+    }
+
+    /// initFromSlice creates a new bitmap from a slice of uint64 integers
+    pub fn initFromSlice(values: []const u64) ?*Roaring64Bitmap {
+        const bitmap_ptr = roaring64_bitmap_of_ptr(values.len, values.ptr) orelse return null;
+        const allocator = std.heap.c_allocator;
+        const self = allocator.create(Roaring64Bitmap) catch return null;
+        self.* = .{ .ptr = bitmap_ptr };
+        return self;
+    }
+
+    /// initFromRange creates a bitmap from a range [min, max) with step
+    pub fn initFromRange(min: u64, max: u64, step: u64) ?*Roaring64Bitmap {
+        const bitmap_ptr = roaring64_bitmap_from_range(min, max, step) orelse return null;
         const allocator = std.heap.c_allocator;
         const self = allocator.create(Roaring64Bitmap) catch return null;
         self.* = .{ .ptr = bitmap_ptr };
@@ -595,25 +713,310 @@ pub const Roaring64Bitmap = struct {
         allocator.destroy(self);
     }
 
+    // Add operations
+
     /// add a value to the bitmap
     pub fn add(self: *Roaring64Bitmap, value: u64) void {
         roaring64_bitmap_add(self.ptr, value);
     }
+
+    /// addChecked adds a value to the bitmap and returns true if the value was added (wasn't present before)
+    pub fn addChecked(self: *Roaring64Bitmap, value: u64) bool {
+        return roaring64_bitmap_add_checked(self.ptr, value);
+    }
+
+    /// addBulk adds a value using context from previous insert for faster insertion
+    pub fn addBulk(self: *Roaring64Bitmap, context: *roaring64_bulk_context_t, value: u64) void {
+        roaring64_bitmap_add_bulk(self.ptr, context, value);
+    }
+
+    /// addMany adds multiple values efficiently
+    pub fn addMany(self: *Roaring64Bitmap, values: []const u64) void {
+        roaring64_bitmap_add_many(self.ptr, values.len, values.ptr);
+    }
+
+    /// addRange adds all values in the range [min, max)
+    pub fn addRange(self: *Roaring64Bitmap, min: u64, max: u64) void {
+        roaring64_bitmap_add_range(self.ptr, min, max);
+    }
+
+    /// addRangeClosed adds all values in the range [min, max] (inclusive)
+    pub fn addRangeClosed(self: *Roaring64Bitmap, min: u64, max: u64) void {
+        roaring64_bitmap_add_range_closed(self.ptr, min, max);
+    }
+
+    // Remove operations
+
+    /// remove a value from the bitmap
+    pub fn remove(self: *Roaring64Bitmap, value: u64) void {
+        roaring64_bitmap_remove(self.ptr, value);
+    }
+
+    /// removeChecked removes a value from the bitmap and returns true if the value was removed (was present before)
+    pub fn removeChecked(self: *Roaring64Bitmap, value: u64) bool {
+        return roaring64_bitmap_remove_checked(self.ptr, value);
+    }
+
+    /// removeBulk removes a value using context from previous operation for faster removal
+    pub fn removeBulk(self: *Roaring64Bitmap, context: *roaring64_bulk_context_t, value: u64) void {
+        roaring64_bitmap_remove_bulk(self.ptr, context, value);
+    }
+
+    /// removeMany removes multiple values
+    pub fn removeMany(self: *Roaring64Bitmap, values: []const u64) void {
+        roaring64_bitmap_remove_many(self.ptr, values.len, values.ptr);
+    }
+
+    /// removeRange removes all values in the range [min, max)
+    pub fn removeRange(self: *Roaring64Bitmap, min: u64, max: u64) void {
+        roaring64_bitmap_remove_range(self.ptr, min, max);
+    }
+
+    /// removeRangeClosed removes all values in the range [min, max] (inclusive)
+    pub fn removeRangeClosed(self: *Roaring64Bitmap, min: u64, max: u64) void {
+        roaring64_bitmap_remove_range_closed(self.ptr, min, max);
+    }
+
+    /// clear the bitmap (remove all elements)
+    pub fn clear(self: *Roaring64Bitmap) void {
+        roaring64_bitmap_clear(self.ptr);
+    }
+
+    // Query operations
 
     /// contains checks if a value is present in the bitmap
     pub fn contains(self: *const Roaring64Bitmap, value: u64) bool {
         return roaring64_bitmap_contains(self.ptr, value);
     }
 
-    /// getCardinality gets the number of elements in the bitmap (cardinality)
+    /// containsRange checks if a range [min, max) is present in the bitmap
+    pub fn containsRange(self: *const Roaring64Bitmap, min: u64, max: u64) bool {
+        return roaring64_bitmap_contains_range(self.ptr, min, max);
+    }
+
+    /// containsBulk checks if a value is present using context from previous operation for faster search
+    pub fn containsBulk(self: *const Roaring64Bitmap, context: *roaring64_bulk_context_t, value: u64) bool {
+        return roaring64_bitmap_contains_bulk(self.ptr, context, value);
+    }
+
+    /// select gets the element at the given rank (0-indexed) and returns null if rank is out of bounds
+    pub fn select(self: *const Roaring64Bitmap, rank_index: u64) ?u64 {
+        var element: u64 = undefined;
+        if (roaring64_bitmap_select(self.ptr, rank_index, &element)) {
+            return element;
+        }
+        return null;
+    }
+
+    /// rank gets the rank (number of elements <= value) of a value
+    pub fn rank(self: *const Roaring64Bitmap, value: u64) u64 {
+        return roaring64_bitmap_rank(self.ptr, value);
+    }
+
+    /// getIndex gets the index of a value in the bitmap and returns null if the value is not present
+    pub fn getIndex(self: *const Roaring64Bitmap, value: u64) ?u64 {
+        var out_index: u64 = undefined;
+        if (roaring64_bitmap_get_index(self.ptr, value, &out_index)) {
+            return out_index;
+        }
+        return null;
+    }
+
+    // Cardinality operations
+
+    /// getCardinality returns the number of elements in the bitmap
     pub fn getCardinality(self: *const Roaring64Bitmap) u64 {
         return roaring64_bitmap_get_cardinality(self.ptr);
+    }
+
+    /// rangeCardinality returns the number of elements in the range [min, max)
+    pub fn rangeCardinality(self: *const Roaring64Bitmap, min: u64, max: u64) u64 {
+        return roaring64_bitmap_range_cardinality(self.ptr, min, max);
+    }
+
+    /// rangeClosedCardinality returns the number of elements in the range [min, max] (inclusive)
+    pub fn rangeClosedCardinality(self: *const Roaring64Bitmap, min: u64, max: u64) u64 {
+        return roaring64_bitmap_range_closed_cardinality(self.ptr, min, max);
     }
 
     /// isEmpty returns true if the bitmap is empty
     pub fn isEmpty(self: *const Roaring64Bitmap) bool {
         return roaring64_bitmap_is_empty(self.ptr);
     }
+
+    /// minimum gets the minimum value in the bitmap, or null if empty
+    pub fn minimum(self: *const Roaring64Bitmap) ?u64 {
+        if (self.isEmpty()) return null;
+        return roaring64_bitmap_minimum(self.ptr);
+    }
+
+    /// maximum gets the maximum value in the bitmap, or null if empty
+    pub fn maximum(self: *const Roaring64Bitmap) ?u64 {
+        if (self.isEmpty()) return null;
+        return roaring64_bitmap_maximum(self.ptr);
+    }
+
+    // Optimization operations
+
+    /// runOptimize optimizes the bitmap for better compression and returns true if the result has at least one run container
+    pub fn runOptimize(self: *Roaring64Bitmap) bool {
+        return roaring64_bitmap_run_optimize(self.ptr);
+    }
+
+    /// shrinkToFit shrinks memory usage to fit current contents and returns the number of bytes saved
+    pub fn shrinkToFit(self: *Roaring64Bitmap) usize {
+        return roaring64_bitmap_shrink_to_fit(self.ptr);
+    }
+
+    // Comparison operations
+
+    /// equals checks if two bitmaps are equal
+    pub fn equals(self: *const Roaring64Bitmap, other: *const Roaring64Bitmap) bool {
+        return roaring64_bitmap_equals(self.ptr, other.ptr);
+    }
+
+    /// isSubset checks if self is a subset of other
+    pub fn isSubset(self: *const Roaring64Bitmap, other: *const Roaring64Bitmap) bool {
+        return roaring64_bitmap_is_subset(self.ptr, other.ptr);
+    }
+
+    /// isStrictSubset checks if self is a strict subset of other
+    pub fn isStrictSubset(self: *const Roaring64Bitmap, other: *const Roaring64Bitmap) bool {
+        return roaring64_bitmap_is_strict_subset(self.ptr, other.ptr);
+    }
+
+    // Set operations
+
+    /// intersectionWith computes the intersection of two bitmaps
+    pub fn intersectionWith(self: *const Roaring64Bitmap, other: *const Roaring64Bitmap) ?*Roaring64Bitmap {
+        const result_ptr = roaring64_bitmap_and(self.ptr, other.ptr) orelse return null;
+        const allocator = std.heap.c_allocator;
+        const result = allocator.create(Roaring64Bitmap) catch return null;
+        result.* = .{ .ptr = result_ptr };
+        return result;
+    }
+
+    /// intersectionCardinality returns the size of the intersection between two bitmaps
+    pub fn intersectionCardinality(self: *const Roaring64Bitmap, other: *const Roaring64Bitmap) u64 {
+        return roaring64_bitmap_and_cardinality(self.ptr, other.ptr);
+    }
+
+    /// intersectionInplace computes the intersection in place (modifies self)
+    pub fn intersectionInplace(self: *Roaring64Bitmap, other: *const Roaring64Bitmap) void {
+        roaring64_bitmap_and_inplace(self.ptr, other.ptr);
+    }
+
+    /// intersects checks if two bitmaps intersect (have any common elements)
+    pub fn intersects(self: *const Roaring64Bitmap, other: *const Roaring64Bitmap) bool {
+        return roaring64_bitmap_intersect(self.ptr, other.ptr);
+    }
+
+    /// intersectsWithRange checks if the bitmap intersects the range [min, max)
+    pub fn intersectsWithRange(self: *const Roaring64Bitmap, min: u64, max: u64) bool {
+        return roaring64_bitmap_intersect_with_range(self.ptr, min, max);
+    }
+
+    /// jaccardIndex computes the Jaccard index between two bitmaps
+    pub fn jaccardIndex(self: *const Roaring64Bitmap, other: *const Roaring64Bitmap) f64 {
+        return roaring64_bitmap_jaccard_index(self.ptr, other.ptr);
+    }
+
+    /// unionWith computes the union of two bitmaps
+    pub fn unionWith(self: *const Roaring64Bitmap, other: *const Roaring64Bitmap) ?*Roaring64Bitmap {
+        const result_ptr = roaring64_bitmap_or(self.ptr, other.ptr) orelse return null;
+        const allocator = std.heap.c_allocator;
+        const result = allocator.create(Roaring64Bitmap) catch return null;
+        result.* = .{ .ptr = result_ptr };
+        return result;
+    }
+
+    /// unionCardinality returns the size of the union between two bitmaps
+    pub fn unionCardinality(self: *const Roaring64Bitmap, other: *const Roaring64Bitmap) u64 {
+        return roaring64_bitmap_or_cardinality(self.ptr, other.ptr);
+    }
+
+    /// unionInplace computes the union in place (modifies self)
+    pub fn unionInplace(self: *Roaring64Bitmap, other: *const Roaring64Bitmap) void {
+        roaring64_bitmap_or_inplace(self.ptr, other.ptr);
+    }
+
+    /// xorWith computes the XOR (symmetric difference) of two bitmaps
+    pub fn xorWith(self: *const Roaring64Bitmap, other: *const Roaring64Bitmap) ?*Roaring64Bitmap {
+        const result_ptr = roaring64_bitmap_xor(self.ptr, other.ptr) orelse return null;
+        const allocator = std.heap.c_allocator;
+        const result = allocator.create(Roaring64Bitmap) catch return null;
+        result.* = .{ .ptr = result_ptr };
+        return result;
+    }
+
+    /// xorCardinality returns the size of the symmetric difference between two bitmaps
+    pub fn xorCardinality(self: *const Roaring64Bitmap, other: *const Roaring64Bitmap) u64 {
+        return roaring64_bitmap_xor_cardinality(self.ptr, other.ptr);
+    }
+
+    /// xorInplace computes the XOR in place (modifies self)
+    pub fn xorInplace(self: *Roaring64Bitmap, other: *const Roaring64Bitmap) void {
+        roaring64_bitmap_xor_inplace(self.ptr, other.ptr);
+    }
+
+    /// differenceWith computes the difference (andnot) between two bitmaps
+    pub fn differenceWith(self: *const Roaring64Bitmap, other: *const Roaring64Bitmap) ?*Roaring64Bitmap {
+        const result_ptr = roaring64_bitmap_andnot(self.ptr, other.ptr) orelse return null;
+        const allocator = std.heap.c_allocator;
+        const result = allocator.create(Roaring64Bitmap) catch return null;
+        result.* = .{ .ptr = result_ptr };
+        return result;
+    }
+
+    /// differenceCardinality returns the size of the difference between two bitmaps
+    pub fn differenceCardinality(self: *const Roaring64Bitmap, other: *const Roaring64Bitmap) u64 {
+        return roaring64_bitmap_andnot_cardinality(self.ptr, other.ptr);
+    }
+
+    /// differenceInplace computes the difference in place (modifies self)
+    pub fn differenceInplace(self: *Roaring64Bitmap, other: *const Roaring64Bitmap) void {
+        roaring64_bitmap_andnot_inplace(self.ptr, other.ptr);
+    }
+
+    /// flip (negate) bits in the range [min, max)
+    pub fn flip(self: *const Roaring64Bitmap, min: u64, max: u64) ?*Roaring64Bitmap {
+        const result_ptr = roaring64_bitmap_flip(self.ptr, min, max) orelse return null;
+        const allocator = std.heap.c_allocator;
+        const result = allocator.create(Roaring64Bitmap) catch return null;
+        result.* = .{ .ptr = result_ptr };
+        return result;
+    }
+
+    /// flipClosed (negate) bits in the range [min, max] (inclusive)
+    pub fn flipClosed(self: *const Roaring64Bitmap, min: u64, max: u64) ?*Roaring64Bitmap {
+        const result_ptr = roaring64_bitmap_flip_closed(self.ptr, min, max) orelse return null;
+        const allocator = std.heap.c_allocator;
+        const result = allocator.create(Roaring64Bitmap) catch return null;
+        result.* = .{ .ptr = result_ptr };
+        return result;
+    }
+
+    /// flipInplace (negate) bits in the range [min, max) in place
+    pub fn flipInplace(self: *Roaring64Bitmap, min: u64, max: u64) void {
+        roaring64_bitmap_flip_inplace(self.ptr, min, max);
+    }
+
+    /// flipClosedInplace (negate) bits in the range [min, max] (inclusive) in place
+    pub fn flipClosedInplace(self: *Roaring64Bitmap, min: u64, max: u64) void {
+        roaring64_bitmap_flip_closed_inplace(self.ptr, min, max);
+    }
+
+    // Conversion operations
+
+    /// toArray converts the bitmap to a sorted array; the caller owns the returned memory and must free it
+    pub fn toArray(self: *const Roaring64Bitmap, allocator: std.mem.Allocator) ![]u64 {
+        const card = self.getCardinality();
+        const array = try allocator.alloc(u64, card);
+        roaring64_bitmap_to_uint64_array(self.ptr, array.ptr);
+        return array;
+    }
+
+    // Serialization operations
 
     /// portableSizeInBytes gets the size in bytes needed to serialize this bitmap (portable format)
     pub fn portableSizeInBytes(self: *const Roaring64Bitmap) usize {
@@ -634,4 +1037,265 @@ pub const Roaring64Bitmap = struct {
         self.* = .{ .ptr = bitmap_ptr };
         return self;
     }
+
+    /// Iterator for roaring64 bitmap values
+    pub const Iterator = struct {
+        ptr: *roaring64_iterator_t,
+
+        /// init creates a new iterator starting at the first value
+        pub fn init(bitmap: *const Roaring64Bitmap) ?Iterator {
+            const it_ptr = roaring64_iterator_create(bitmap.ptr) orelse return null;
+            return .{ .ptr = it_ptr };
+        }
+
+        /// initLast creates a new iterator starting at the last value
+        pub fn initLast(bitmap: *const Roaring64Bitmap) ?Iterator {
+            const it_ptr = roaring64_iterator_create_last(bitmap.ptr) orelse return null;
+            return .{ .ptr = it_ptr };
+        }
+
+        /// deinit frees the iterator
+        pub fn deinit(self: *Iterator) void {
+            roaring64_iterator_free(self.ptr);
+        }
+
+        /// reinit re-initializes the iterator to the first value
+        pub fn reinit(self: *Iterator, bitmap: *const Roaring64Bitmap) void {
+            roaring64_iterator_reinit(bitmap.ptr, self.ptr);
+        }
+
+        /// reinitLast re-initializes the iterator to the last value
+        pub fn reinitLast(self: *Iterator, bitmap: *const Roaring64Bitmap) void {
+            roaring64_iterator_reinit_last(bitmap.ptr, self.ptr);
+        }
+
+        /// copy creates a copy of the iterator
+        pub fn copy(self: *const Iterator) ?Iterator {
+            const it_ptr = roaring64_iterator_copy(self.ptr) orelse return null;
+            return .{ .ptr = it_ptr };
+        }
+
+        /// hasValue returns true if the iterator currently points to a value
+        pub fn hasValue(self: *const Iterator) bool {
+            return roaring64_iterator_has_value(self.ptr);
+        }
+
+        /// value returns the value the iterator currently points to
+        pub fn value(self: *const Iterator) u64 {
+            return roaring64_iterator_value(self.ptr);
+        }
+
+        /// next gets the next value. Returns null if iteration is complete
+        pub fn next(self: *Iterator) ?u64 {
+            if (!self.hasValue()) return null;
+            const val = self.value();
+            _ = roaring64_iterator_advance(self.ptr);
+            return val;
+        }
+
+        /// advance advances the iterator and returns true if there's a new value
+        pub fn advance(self: *Iterator) bool {
+            return roaring64_iterator_advance(self.ptr);
+        }
+
+        /// previous moves the iterator backward and returns true if there's a new value
+        pub fn previous(self: *Iterator) bool {
+            return roaring64_iterator_previous(self.ptr);
+        }
+
+        /// moveEqualOrLarger moves the iterator to the first value >= val
+        pub fn moveEqualOrLarger(self: *Iterator, val: u64) bool {
+            return roaring64_iterator_move_equalorlarger(self.ptr, val);
+        }
+
+        /// read reads up to count values into the buffer and returns the number of elements read
+        pub fn read(self: *Iterator, buffer: []u64) u64 {
+            return roaring64_iterator_read(self.ptr, buffer.ptr, buffer.len);
+        }
+    };
 };
+
+test "basic roaring64 bitmap operations" {
+    const bitmap = Roaring64Bitmap.init() orelse return error.AllocationFailed;
+    defer bitmap.deinit();
+
+    try std.testing.expect(bitmap.isEmpty());
+    try std.testing.expectEqual(@as(u64, 0), bitmap.getCardinality());
+
+    bitmap.add(1);
+    bitmap.add(2);
+    bitmap.add(3);
+    bitmap.add(0xFFFFFFFF); // Max 32-bit value
+    bitmap.add(0x100000000); // First 64-bit value
+
+    try std.testing.expect(!bitmap.isEmpty());
+    try std.testing.expectEqual(@as(u64, 5), bitmap.getCardinality());
+    try std.testing.expect(bitmap.contains(1));
+    try std.testing.expect(bitmap.contains(0xFFFFFFFF));
+    try std.testing.expect(bitmap.contains(0x100000000));
+    try std.testing.expect(!bitmap.contains(4));
+}
+
+test "roaring64 bitmap from slice" {
+    const values = [_]u64{ 1, 5, 10, 100, 1000, 0x100000000 };
+    const bitmap = Roaring64Bitmap.initFromSlice(&values) orelse return error.AllocationFailed;
+    defer bitmap.deinit();
+
+    try std.testing.expectEqual(@as(u64, 6), bitmap.getCardinality());
+    try std.testing.expect(bitmap.contains(1));
+    try std.testing.expect(bitmap.contains(5));
+    try std.testing.expect(bitmap.contains(1000));
+    try std.testing.expect(bitmap.contains(0x100000000));
+}
+
+test "roaring64 bitmap range operations" {
+    const bitmap = Roaring64Bitmap.init() orelse return error.AllocationFailed;
+    defer bitmap.deinit();
+
+    bitmap.addRange(10, 20);
+
+    try std.testing.expectEqual(@as(u64, 10), bitmap.getCardinality());
+    try std.testing.expect(bitmap.contains(10));
+    try std.testing.expect(bitmap.contains(19));
+    try std.testing.expect(!bitmap.contains(20));
+    try std.testing.expect(!bitmap.contains(9));
+
+    try std.testing.expectEqual(@as(u64, 10), bitmap.rangeCardinality(10, 20));
+    try std.testing.expect(bitmap.containsRange(10, 20));
+}
+
+test "roaring64 bitmap union" {
+    const bitmap1 = Roaring64Bitmap.init() orelse return error.AllocationFailed;
+    defer bitmap1.deinit();
+
+    const bitmap2 = Roaring64Bitmap.init() orelse return error.AllocationFailed;
+    defer bitmap2.deinit();
+
+    bitmap1.add(1);
+    bitmap1.add(2);
+    bitmap1.add(3);
+
+    bitmap2.add(3);
+    bitmap2.add(4);
+    bitmap2.add(5);
+
+    const result = bitmap1.unionWith(bitmap2) orelse return error.AllocationFailed;
+    defer result.deinit();
+
+    try std.testing.expectEqual(@as(u64, 5), result.getCardinality());
+    try std.testing.expect(result.contains(1));
+    try std.testing.expect(result.contains(2));
+    try std.testing.expect(result.contains(3));
+    try std.testing.expect(result.contains(4));
+    try std.testing.expect(result.contains(5));
+
+    try std.testing.expectEqual(@as(u64, 5), bitmap1.unionCardinality(bitmap2));
+}
+
+test "roaring64 bitmap intersection" {
+    const bitmap1 = Roaring64Bitmap.init() orelse return error.AllocationFailed;
+    defer bitmap1.deinit();
+
+    const bitmap2 = Roaring64Bitmap.init() orelse return error.AllocationFailed;
+    defer bitmap2.deinit();
+
+    bitmap1.add(1);
+    bitmap1.add(2);
+    bitmap1.add(3);
+
+    bitmap2.add(2);
+    bitmap2.add(3);
+    bitmap2.add(4);
+
+    const result = bitmap1.intersectionWith(bitmap2) orelse return error.AllocationFailed;
+    defer result.deinit();
+
+    try std.testing.expectEqual(@as(u64, 2), result.getCardinality());
+    try std.testing.expect(result.contains(2));
+    try std.testing.expect(result.contains(3));
+    try std.testing.expect(!result.contains(1));
+    try std.testing.expect(!result.contains(4));
+
+    try std.testing.expect(bitmap1.intersects(bitmap2));
+    try std.testing.expectEqual(@as(u64, 2), bitmap1.intersectionCardinality(bitmap2));
+}
+
+test "roaring64 bitmap iterator" {
+    const bitmap = Roaring64Bitmap.init() orelse return error.AllocationFailed;
+    defer bitmap.deinit();
+
+    bitmap.add(1);
+    bitmap.add(5);
+    bitmap.add(10);
+    bitmap.add(0x100000000);
+
+    var it = Roaring64Bitmap.Iterator.init(bitmap) orelse return error.AllocationFailed;
+    defer it.deinit();
+
+    try std.testing.expectEqual(@as(?u64, 1), it.next());
+    try std.testing.expectEqual(@as(?u64, 5), it.next());
+    try std.testing.expectEqual(@as(?u64, 10), it.next());
+    try std.testing.expectEqual(@as(?u64, 0x100000000), it.next());
+    try std.testing.expectEqual(@as(?u64, null), it.next());
+}
+
+test "roaring64 bitmap to array" {
+    const allocator = std.testing.allocator;
+
+    const bitmap = Roaring64Bitmap.init() orelse return error.AllocationFailed;
+    defer bitmap.deinit();
+
+    bitmap.add(1);
+    bitmap.add(5);
+    bitmap.add(10);
+    bitmap.add(0x100000000);
+
+    const array = try bitmap.toArray(allocator);
+    defer allocator.free(array);
+
+    try std.testing.expectEqual(@as(usize, 4), array.len);
+    try std.testing.expectEqual(@as(u64, 1), array[0]);
+    try std.testing.expectEqual(@as(u64, 5), array[1]);
+    try std.testing.expectEqual(@as(u64, 10), array[2]);
+    try std.testing.expectEqual(@as(u64, 0x100000000), array[3]);
+}
+
+test "roaring64 bitmap minimum and maximum" {
+    const bitmap = Roaring64Bitmap.init() orelse return error.AllocationFailed;
+    defer bitmap.deinit();
+
+    try std.testing.expectEqual(@as(?u64, null), bitmap.minimum());
+    try std.testing.expectEqual(@as(?u64, null), bitmap.maximum());
+
+    bitmap.add(100);
+    bitmap.add(5);
+    bitmap.add(1000);
+    bitmap.add(0x100000000);
+
+    try std.testing.expectEqual(@as(?u64, 5), bitmap.minimum());
+    try std.testing.expectEqual(@as(?u64, 0x100000000), bitmap.maximum());
+}
+
+test "roaring64 bitmap rank and select" {
+    const bitmap = Roaring64Bitmap.init() orelse return error.AllocationFailed;
+    defer bitmap.deinit();
+
+    bitmap.add(10);
+    bitmap.add(20);
+    bitmap.add(30);
+    bitmap.add(40);
+
+    // rank returns the number of elements <= value
+    try std.testing.expectEqual(@as(u64, 0), bitmap.rank(5));
+    try std.testing.expectEqual(@as(u64, 1), bitmap.rank(10));
+    try std.testing.expectEqual(@as(u64, 2), bitmap.rank(20));
+    try std.testing.expectEqual(@as(u64, 4), bitmap.rank(40));
+    try std.testing.expectEqual(@as(u64, 4), bitmap.rank(50));
+
+    // select gets the element at the given rank (0-indexed)
+    try std.testing.expectEqual(@as(?u64, 10), bitmap.select(0));
+    try std.testing.expectEqual(@as(?u64, 20), bitmap.select(1));
+    try std.testing.expectEqual(@as(?u64, 30), bitmap.select(2));
+    try std.testing.expectEqual(@as(?u64, 40), bitmap.select(3));
+    try std.testing.expectEqual(@as(?u64, null), bitmap.select(4));
+}
