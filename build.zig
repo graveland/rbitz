@@ -1,6 +1,6 @@
 const std = @import("std");
 
-fn checkCRoaringVersion(b: *std.Build) !void {
+fn checkLocalCRoaringVersion(b: *std.Build) !void {
     const header_path = b.pathFromRoot("CRoaring/include/roaring/roaring_version.h");
     const content = try std.fs.cwd().readFileAlloc(
         header_path,
@@ -9,6 +9,10 @@ fn checkCRoaringVersion(b: *std.Build) !void {
     );
     defer b.allocator.free(content);
 
+    try checkVersionContent(content);
+}
+
+fn checkVersionContent(content: []const u8) !void {
     var major: ?u32 = null;
     var minor: ?u32 = null;
 
@@ -41,6 +45,52 @@ fn checkCRoaringVersion(b: *std.Build) !void {
     }
 }
 
+fn hasLocalCRoaring(b: *std.Build) bool {
+    const src_path = b.pathFromRoot("CRoaring/src/roaring.c");
+    std.fs.cwd().access(src_path, .{}) catch return false;
+    return true;
+}
+
+const SystemRoaring = struct {
+    include_path: []const u8,
+    lib_path: ?[]const u8,
+};
+
+fn findSystemRoaring(b: *std.Build) ?SystemRoaring {
+    const result = std.process.Child.run(.{
+        .allocator = b.allocator,
+        .argv = &.{ "pkg-config", "--cflags", "--libs", "roaring" },
+    }) catch return null;
+
+    if (result.term.Exited != 0) return null;
+
+    var include_path: ?[]const u8 = null;
+    var lib_path: ?[]const u8 = null;
+
+    var parts = std.mem.tokenizeScalar(u8, result.stdout, ' ');
+    while (parts.next()) |part| {
+        const trimmed = std.mem.trim(u8, part, " \t\n\r");
+        if (std.mem.startsWith(u8, trimmed, "-I")) {
+            include_path = trimmed[2..];
+        } else if (std.mem.startsWith(u8, trimmed, "-L")) {
+            lib_path = trimmed[2..];
+        }
+    }
+
+    if (include_path) |inc| {
+        // Try to verify the version by reading the header
+        const version_path = std.fs.path.join(b.allocator, &.{ inc, "roaring/roaring_version.h" }) catch return null;
+        const content = std.fs.cwd().readFileAlloc(version_path, b.allocator, .limited(1024 * 1024)) catch return null;
+        checkVersionContent(content) catch {
+            std.debug.print("WARNING: System roaring library version is too old (requires >= 4.4.0)\n", .{});
+            return null;
+        };
+        return .{ .include_path = inc, .lib_path = lib_path };
+    }
+
+    return null;
+}
+
 // Although this function looks imperative, it does not perform the build
 // directly and instead it mutates the build graph (`b`) that will be then
 // executed by an external runner. The functions in `std.Build` implement a DSL
@@ -62,67 +112,90 @@ pub fn build(b: *std.Build) void {
     // target and optimize options) will be listed when running `zig build --help`
     // in this directory.
 
-    // Build CRoaring static library from source
-    // Create a module for CRoaring (C-only, no root source file)
-    const croaring_module = b.createModule(.{
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    croaring_module.addIncludePath(b.path("CRoaring/include"));
+    // Determine whether to use local CRoaring source or system library
+    const use_local = hasLocalCRoaring(b);
+    const system_roaring = if (!use_local) findSystemRoaring(b) else null;
 
-    // Add all CRoaring C source files
-    const croaring_sources = [_][]const u8{
-        "CRoaring/src/array_util.c",
-        "CRoaring/src/art/art.c",
-        "CRoaring/src/bitset_util.c",
-        "CRoaring/src/bitset.c",
-        "CRoaring/src/containers/array.c",
-        "CRoaring/src/containers/bitset.c",
-        "CRoaring/src/containers/containers.c",
-        "CRoaring/src/containers/convert.c",
-        "CRoaring/src/containers/mixed_andnot.c",
-        "CRoaring/src/containers/mixed_equal.c",
-        "CRoaring/src/containers/mixed_intersection.c",
-        "CRoaring/src/containers/mixed_negation.c",
-        "CRoaring/src/containers/mixed_subset.c",
-        "CRoaring/src/containers/mixed_union.c",
-        "CRoaring/src/containers/mixed_xor.c",
-        "CRoaring/src/containers/run.c",
-        "CRoaring/src/isadetection.c",
-        "CRoaring/src/memory.c",
-        "CRoaring/src/roaring_array.c",
-        "CRoaring/src/roaring_priority_queue.c",
-        "CRoaring/src/roaring.c",
-        "CRoaring/src/roaring64.c",
-    };
-
-    croaring_module.addCSourceFiles(.{
-        .files = &croaring_sources,
-        .flags = &[_][]const u8{
-            "-std=c11",
-            "-O3",
-            "-DROARING_EXCEPTIONS=1",
-
-            // TODO: this needs to be investigated to see if we can build CRoaring in an optimal way depending on
-            //       the CPU capabilities. CRoaring builds locally on my machines without this, but fails in CI.
-            "-DCROARING_COMPILER_SUPPORTS_AVX512=0",
-        },
-    });
-
-    // Create the static library using the module
-    const croaring = b.addLibrary(.{
-        .name = "roaring",
-        .root_module = croaring_module,
-        .linkage = .static,
-    });
-    b.installArtifact(croaring);
-
-    checkCRoaringVersion(b) catch |err| {
-        std.debug.print("ERROR: CRoaring version check failed: {}\n", .{err});
+    if (!use_local and system_roaring == null) {
+        std.debug.print("ERROR: CRoaring not found.\n", .{});
+        std.debug.print("Either:\n", .{});
+        std.debug.print("  1. Add CRoaring as a submodule in CRoaring/\n", .{});
+        std.debug.print("  2. Install roaring library system-wide (with pkg-config support)\n", .{});
         std.debug.print("Required version: >= 4.4.0\n", .{});
         std.process.exit(1);
-    };
+    }
+
+    // Build CRoaring static library from source (only if using local)
+    var croaring: ?*std.Build.Step.Compile = null;
+    var include_path: std.Build.LazyPath = undefined;
+
+    if (use_local) {
+        checkLocalCRoaringVersion(b) catch |err| {
+            std.debug.print("ERROR: CRoaring version check failed: {}\n", .{err});
+            std.debug.print("Required version: >= 4.4.0\n", .{});
+            std.process.exit(1);
+        };
+
+        // Create a module for CRoaring (C-only, no root source file)
+        const croaring_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        });
+        croaring_module.addIncludePath(b.path("CRoaring/include"));
+
+        // Add all CRoaring C source files
+        const croaring_sources = [_][]const u8{
+            "CRoaring/src/array_util.c",
+            "CRoaring/src/art/art.c",
+            "CRoaring/src/bitset_util.c",
+            "CRoaring/src/bitset.c",
+            "CRoaring/src/containers/array.c",
+            "CRoaring/src/containers/bitset.c",
+            "CRoaring/src/containers/containers.c",
+            "CRoaring/src/containers/convert.c",
+            "CRoaring/src/containers/mixed_andnot.c",
+            "CRoaring/src/containers/mixed_equal.c",
+            "CRoaring/src/containers/mixed_intersection.c",
+            "CRoaring/src/containers/mixed_negation.c",
+            "CRoaring/src/containers/mixed_subset.c",
+            "CRoaring/src/containers/mixed_union.c",
+            "CRoaring/src/containers/mixed_xor.c",
+            "CRoaring/src/containers/run.c",
+            "CRoaring/src/isadetection.c",
+            "CRoaring/src/memory.c",
+            "CRoaring/src/roaring_array.c",
+            "CRoaring/src/roaring_priority_queue.c",
+            "CRoaring/src/roaring.c",
+            "CRoaring/src/roaring64.c",
+        };
+
+        croaring_module.addCSourceFiles(.{
+            .files = &croaring_sources,
+            .flags = &[_][]const u8{
+                "-std=c11",
+                "-O3",
+                "-DROARING_EXCEPTIONS=1",
+
+                // TODO: this needs to be investigated to see if we can build CRoaring in an optimal way depending on
+                //       the CPU capabilities. CRoaring builds locally on my machines without this, but fails in CI.
+                "-DCROARING_COMPILER_SUPPORTS_AVX512=0",
+            },
+        });
+
+        // Create the static library using the module
+        croaring = b.addLibrary(.{
+            .name = "roaring",
+            .root_module = croaring_module,
+            .linkage = .static,
+        });
+        b.installArtifact(croaring.?);
+        include_path = b.path("CRoaring/include");
+    } else {
+        // Using system library
+        const sys = system_roaring.?;
+        include_path = .{ .cwd_relative = sys.include_path };
+    }
 
     // This creates a module, which represents a collection of source files alongside
     // some compilation options, such as optimization mode and linked system libraries.
@@ -144,9 +217,13 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
-    // Add CRoaring include path and link the compiled library to the module
-    mod.addIncludePath(b.path("CRoaring/include"));
-    mod.linkLibrary(croaring);
+    // Add CRoaring include path and link the library to the module
+    mod.addIncludePath(include_path);
+    if (croaring) |lib| {
+        mod.linkLibrary(lib);
+    } else {
+        mod.linkSystemLibrary("roaring", .{});
+    }
 
     // Here we define an executable. An executable needs to have a root module
     // which needs to expose a `main` function. While we could add a main function
@@ -191,8 +268,12 @@ pub fn build(b: *std.Build) void {
     });
 
     // Add CRoaring library linking for the executable
-    exe.root_module.addIncludePath(b.path("CRoaring/include"));
-    exe.root_module.linkLibrary(croaring);
+    exe.root_module.addIncludePath(include_path);
+    if (croaring) |lib| {
+        exe.root_module.linkLibrary(lib);
+    } else {
+        exe.root_module.linkSystemLibrary("roaring", .{});
+    }
 
     // This declares intent for the executable to be installed into the
     // install prefix when running `zig build` (i.e. when executing the default
@@ -234,8 +315,12 @@ pub fn build(b: *std.Build) void {
     });
 
     // Add CRoaring library linking for tests
-    mod_tests.root_module.addIncludePath(b.path("CRoaring/include"));
-    mod_tests.root_module.linkLibrary(croaring);
+    mod_tests.root_module.addIncludePath(include_path);
+    if (croaring) |lib| {
+        mod_tests.root_module.linkLibrary(lib);
+    } else {
+        mod_tests.root_module.linkSystemLibrary("roaring", .{});
+    }
 
     // A run step that will run the test executable.
     const run_mod_tests = b.addRunArtifact(mod_tests);
@@ -248,8 +333,12 @@ pub fn build(b: *std.Build) void {
     });
 
     // Add CRoaring library linking for executable tests
-    exe_tests.root_module.addIncludePath(b.path("CRoaring/include"));
-    exe_tests.root_module.linkLibrary(croaring);
+    exe_tests.root_module.addIncludePath(include_path);
+    if (croaring) |lib| {
+        exe_tests.root_module.linkLibrary(lib);
+    } else {
+        exe_tests.root_module.linkSystemLibrary("roaring", .{});
+    }
 
     // A run step that will run the second test executable.
     const run_exe_tests = b.addRunArtifact(exe_tests);
