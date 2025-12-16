@@ -1,7 +1,21 @@
 const std = @import("std");
 
-fn checkLocalCRoaringVersion(b: *std.Build) !void {
-    const header_path = b.pathFromRoot("CRoaring/include/roaring/roaring_version.h");
+// Get the directory where this build.zig lives
+fn getSrcDir() []const u8 {
+    return std.fs.path.dirname(@src().file) orelse ".";
+}
+
+fn getVersion(b: *std.Build) []const u8 {
+    const src_dir = getSrcDir();
+    var exit_code: u8 = 0;
+    const git_hash = b.runAllowFail(&[_][]const u8{
+        "git", "-C", src_dir, "rev-parse", "HEAD",
+    }, &exit_code, .Inherit) catch return "unknown";
+    return std.mem.trim(u8, git_hash, &std.ascii.whitespace);
+}
+
+fn checkLocalCRoaringVersionAt(b: *std.Build, base_dir: []const u8) !void {
+    const header_path = b.pathJoin(&.{ base_dir, "CRoaring/include/roaring/roaring_version.h" });
     const content = try std.fs.cwd().readFileAlloc(
         header_path,
         b.allocator,
@@ -45,8 +59,8 @@ fn checkVersionContent(content: []const u8) !void {
     }
 }
 
-fn hasLocalCRoaring(b: *std.Build) bool {
-    const src_path = b.pathFromRoot("CRoaring/src/roaring.c");
+fn hasLocalCRoaringAt(b: *std.Build, base_dir: []const u8) bool {
+    const src_path = b.pathJoin(&.{ base_dir, "CRoaring/src/roaring.c" });
     std.fs.cwd().access(src_path, .{}) catch return false;
     return true;
 }
@@ -91,29 +105,48 @@ fn findSystemRoaring(b: *std.Build) ?SystemRoaring {
     return null;
 }
 
-// Although this function looks imperative, it does not perform the build
-// directly and instead it mutates the build graph (`b`) that will be then
-// executed by an external runner. The functions in `std.Build` implement a DSL
-// for defining build steps and express dependencies between them, allowing the
-// build runner to parallelize the build automatically (and the cache system to
-// know when a step doesn't need to be re-run).
-pub fn build(b: *std.Build) void {
-    // Standard target options allow the person running `zig build` to choose
-    // what target to build for. Here we do not override the defaults, which
-    // means any target is allowed, and the default is native. Other options
-    // for restricting supported target set are available.
-    const target = b.standardTargetOptions(.{});
-    // Standard optimization options allow the person running `zig build` to select
-    // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall. Here we do not
-    // set a preferred release mode, allowing the user to decide how to optimize.
-    const optimize = b.standardOptimizeOption(.{});
-    // It's also possible to define more custom flags to toggle optional features
-    // of this build script using `b.option()`. All defined flags (including
-    // target and optimize options) will be listed when running `zig build --help`
-    // in this directory.
+// CRoaring source files relative to CRoaring directory
+const croaring_source_files = [_][]const u8{
+    "src/array_util.c",
+    "src/art/art.c",
+    "src/bitset_util.c",
+    "src/bitset.c",
+    "src/containers/array.c",
+    "src/containers/bitset.c",
+    "src/containers/containers.c",
+    "src/containers/convert.c",
+    "src/containers/mixed_andnot.c",
+    "src/containers/mixed_equal.c",
+    "src/containers/mixed_intersection.c",
+    "src/containers/mixed_negation.c",
+    "src/containers/mixed_subset.c",
+    "src/containers/mixed_union.c",
+    "src/containers/mixed_xor.c",
+    "src/containers/run.c",
+    "src/isadetection.c",
+    "src/memory.c",
+    "src/roaring_array.c",
+    "src/roaring_priority_queue.c",
+    "src/roaring.c",
+    "src/roaring64.c",
+};
 
+/// CRoaring setup result
+const CRoaringInfo = struct {
+    lib: ?*std.Build.Step.Compile,
+    include_path: std.Build.LazyPath,
+};
+
+/// Internal helper to set up CRoaring (local submodule or system library).
+/// Used by both createModule() and build().
+fn setupCRoaring(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    base_dir: []const u8,
+) CRoaringInfo {
     // Determine whether to use local CRoaring source or system library
-    const use_local = hasLocalCRoaring(b);
+    const use_local = hasLocalCRoaringAt(b, base_dir);
     const system_roaring = if (!use_local) findSystemRoaring(b) else null;
 
     if (!use_local and system_roaring == null) {
@@ -125,12 +158,8 @@ pub fn build(b: *std.Build) void {
         std.process.exit(1);
     }
 
-    // Build CRoaring static library from source (only if using local)
-    var croaring: ?*std.Build.Step.Compile = null;
-    var include_path: std.Build.LazyPath = undefined;
-
     if (use_local) {
-        checkLocalCRoaringVersion(b) catch |err| {
+        checkLocalCRoaringVersionAt(b, base_dir) catch |err| {
             std.debug.print("ERROR: CRoaring version check failed: {}\n", .{err});
             std.debug.print("Required version: >= 4.4.0\n", .{});
             std.process.exit(1);
@@ -142,223 +171,144 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .link_libc = true,
         });
-        croaring_module.addIncludePath(b.path("CRoaring/include"));
 
-        // Add all CRoaring C source files
-        const croaring_sources = [_][]const u8{
-            "CRoaring/src/array_util.c",
-            "CRoaring/src/art/art.c",
-            "CRoaring/src/bitset_util.c",
-            "CRoaring/src/bitset.c",
-            "CRoaring/src/containers/array.c",
-            "CRoaring/src/containers/bitset.c",
-            "CRoaring/src/containers/containers.c",
-            "CRoaring/src/containers/convert.c",
-            "CRoaring/src/containers/mixed_andnot.c",
-            "CRoaring/src/containers/mixed_equal.c",
-            "CRoaring/src/containers/mixed_intersection.c",
-            "CRoaring/src/containers/mixed_negation.c",
-            "CRoaring/src/containers/mixed_subset.c",
-            "CRoaring/src/containers/mixed_union.c",
-            "CRoaring/src/containers/mixed_xor.c",
-            "CRoaring/src/containers/run.c",
-            "CRoaring/src/isadetection.c",
-            "CRoaring/src/memory.c",
-            "CRoaring/src/roaring_array.c",
-            "CRoaring/src/roaring_priority_queue.c",
-            "CRoaring/src/roaring.c",
-            "CRoaring/src/roaring64.c",
-        };
+        const croaring_include_path = b.pathJoin(&.{ base_dir, "CRoaring/include" });
+        croaring_module.addIncludePath(.{ .cwd_relative = croaring_include_path });
+
+        // Add all CRoaring C source files with full paths
+        var sources: [croaring_source_files.len][]const u8 = undefined;
+        for (croaring_source_files, 0..) |src, i| {
+            sources[i] = b.pathJoin(&.{ base_dir, "CRoaring", src });
+        }
 
         croaring_module.addCSourceFiles(.{
-            .files = &croaring_sources,
+            .files = &sources,
             .flags = &[_][]const u8{
                 "-std=c11",
                 "-O3",
                 "-DROARING_EXCEPTIONS=1",
-
-                // TODO: this needs to be investigated to see if we can build CRoaring in an optimal way depending on
-                //       the CPU capabilities. CRoaring builds locally on my machines without this, but fails in CI.
                 "-DCROARING_COMPILER_SUPPORTS_AVX512=0",
             },
         });
 
         // Create the static library using the module
-        croaring = b.addLibrary(.{
+        const lib = b.addLibrary(.{
             .name = "roaring",
             .root_module = croaring_module,
             .linkage = .static,
         });
-        b.installArtifact(croaring.?);
-        include_path = b.path("CRoaring/include");
+        return .{
+            .lib = lib,
+            .include_path = .{ .cwd_relative = croaring_include_path },
+        };
     } else {
         // Using system library
         const sys = system_roaring.?;
-        include_path = .{ .cwd_relative = sys.include_path };
+        return .{
+            .lib = null,
+            .include_path = .{ .cwd_relative = sys.include_path },
+        };
     }
+}
 
-    // This creates a module, which represents a collection of source files alongside
-    // some compilation options, such as optimization mode and linked system libraries.
-    // Zig modules are the preferred way of making Zig code available to consumers.
-    // addModule defines a module that we intend to make available for importing
-    // to our consumers. We must give it a name because a Zig package can expose
-    // multiple modules and consumers will need to be able to specify which
-    // module they want to access.
-    const mod = b.addModule("rbitz", .{
-        // The root source file is the "entry point" of this module. Users of
-        // this module will only be able to access public declarations contained
-        // in this file, which means that if you have declarations that you
-        // intend to expose to consumers that were defined in other files part
-        // of this module, you will have to make sure to re-export them from
-        // the root file.
-        .root_source_file = b.path("src/root.zig"),
-        // Later on we'll use this module as the root module of a test executable
-        // which requires us to specify a target.
-        .target = target,
-    });
-
-    // Add CRoaring include path and link the library to the module
-    mod.addIncludePath(include_path);
-    if (croaring) |lib| {
+/// Helper to link CRoaring to a module
+fn linkCRoaring(mod: *std.Build.Module, info: CRoaringInfo) void {
+    mod.addIncludePath(info.include_path);
+    if (info.lib) |lib| {
         mod.linkLibrary(lib);
     } else {
         mod.linkSystemLibrary("roaring", .{});
     }
+}
 
-    // Here we define an executable. An executable needs to have a root module
-    // which needs to expose a `main` function. While we could add a main function
-    // to the module defined above, it's sometimes preferable to split business
-    // logic and the CLI into two separate modules.
-    //
-    // If your goal is to create a Zig library for others to use, consider if
-    // it might benefit from also exposing a CLI tool. A parser library for a
-    // data serialization format could also bundle a CLI syntax checker, for example.
-    //
-    // If instead your goal is to create an executable, consider if users might
-    // be interested in also being able to embed the core functionality of your
-    // program in their own executable in order to avoid the overhead involved in
-    // subprocessing your CLI tool.
-    //
-    // If neither case applies to you, feel free to delete the declaration you
-    // don't need and to put everything under a single module.
+/// Creates the rbitz module with CRoaring handling.
+/// Use this when incorporating rbitz as a dependency to share modules with parent.
+/// The function handles detection and building of CRoaring (local submodule or system library).
+pub fn createModule(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    root_source_file: std.Build.LazyPath,
+) *std.Build.Module {
+    const src_dir = getSrcDir();
+    const croaring = setupCRoaring(b, target, optimize, src_dir);
+
+    // Create the rbitz module
+    const mod = b.addModule("rbitz", .{
+        .root_source_file = root_source_file,
+        .target = target,
+        .optimize = optimize,
+    });
+
+    linkCRoaring(mod, croaring);
+
+    // Add version info
+    const options = b.addOptions();
+    options.addOption([]const u8, "version", getVersion(b));
+    mod.addOptions("build_options", options);
+
+    return mod;
+}
+
+/// Standalone build function for building rbitz directly (not as a dependency).
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    // Use helper to set up CRoaring - for standalone builds, use current directory
+    const croaring = setupCRoaring(b, target, optimize, ".");
+
+    // Install the static library if using local CRoaring
+    if (croaring.lib) |lib| {
+        b.installArtifact(lib);
+    }
+
+    // Create the rbitz module
+    const mod = b.addModule("rbitz", .{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+    });
+    linkCRoaring(mod, croaring);
+
+    // Add version info
+    const options = b.addOptions();
+    options.addOption([]const u8, "version", getVersion(b));
+    mod.addOptions("build_options", options);
+
+    // Build executable
     const exe = b.addExecutable(.{
         .name = "rbitz",
         .root_module = b.createModule(.{
-            // b.createModule defines a new module just like b.addModule but,
-            // unlike b.addModule, it does not expose the module to consumers of
-            // this package, which is why in this case we don't have to give it a name.
             .root_source_file = b.path("src/main.zig"),
-            // Target and optimization levels must be explicitly wired in when
-            // defining an executable or library (in the root module), and you
-            // can also hardcode a specific target for an executable or library
-            // definition if desireable (e.g. firmware for embedded devices).
             .target = target,
             .optimize = optimize,
-            // List of modules available for import in source files part of the
-            // root module.
             .imports = &.{
-                // Here "rbitz" is the name you will use in your source code to
-                // import this module (e.g. `@import("rbitz")`). The name is
-                // repeated because you are allowed to rename your imports, which
-                // can be extremely useful in case of collisions (which can happen
-                // importing modules from different packages).
                 .{ .name = "rbitz", .module = mod },
             },
         }),
     });
-
-    // Add CRoaring library linking for the executable
-    exe.root_module.addIncludePath(include_path);
-    if (croaring) |lib| {
-        exe.root_module.linkLibrary(lib);
-    } else {
-        exe.root_module.linkSystemLibrary("roaring", .{});
-    }
-
-    // This declares intent for the executable to be installed into the
-    // install prefix when running `zig build` (i.e. when executing the default
-    // step). By default the install prefix is `zig-out/` but can be overridden
-    // by passing `--prefix` or `-p`.
+    linkCRoaring(exe.root_module, croaring);
     b.installArtifact(exe);
 
-    // This creates a top level step. Top level steps have a name and can be
-    // invoked by name when running `zig build` (e.g. `zig build run`).
-    // This will evaluate the `run` step rather than the default step.
-    // For a top level step to actually do something, it must depend on other
-    // steps (e.g. a Run step, as we will see in a moment).
+    // Run step
     const run_step = b.step("run", "Run the app");
-
-    // This creates a RunArtifact step in the build graph. A RunArtifact step
-    // invokes an executable compiled by Zig. Steps will only be executed by the
-    // runner if invoked directly by the user (in the case of top level steps)
-    // or if another step depends on it, so it's up to you to define when and
-    // how this Run step will be executed. In our case we want to run it when
-    // the user runs `zig build run`, so we create a dependency link.
     const run_cmd = b.addRunArtifact(exe);
     run_step.dependOn(&run_cmd.step);
-
-    // By making the run step depend on the default step, it will be run from the
-    // installation directory rather than directly from within the cache directory.
     run_cmd.step.dependOn(b.getInstallStep());
-
-    // This allows the user to pass arguments to the application in the build
-    // command itself, like this: `zig build run -- arg1 arg2 etc`
     if (b.args) |args| {
         run_cmd.addArgs(args);
     }
 
-    // Creates an executable that will run `test` blocks from the provided module.
-    // Here `mod` needs to define a target, which is why earlier we made sure to
-    // set the releative field.
-    const mod_tests = b.addTest(.{
-        .root_module = mod,
-    });
-
-    // Add CRoaring library linking for tests
-    mod_tests.root_module.addIncludePath(include_path);
-    if (croaring) |lib| {
-        mod_tests.root_module.linkLibrary(lib);
-    } else {
-        mod_tests.root_module.linkSystemLibrary("roaring", .{});
-    }
-
-    // A run step that will run the test executable.
+    // Tests
+    const mod_tests = b.addTest(.{ .root_module = mod });
+    linkCRoaring(mod_tests.root_module, croaring);
     const run_mod_tests = b.addRunArtifact(mod_tests);
 
-    // Creates an executable that will run `test` blocks from the executable's
-    // root module. Note that test executables only test one module at a time,
-    // hence why we have to create two separate ones.
-    const exe_tests = b.addTest(.{
-        .root_module = exe.root_module,
-    });
-
-    // Add CRoaring library linking for executable tests
-    exe_tests.root_module.addIncludePath(include_path);
-    if (croaring) |lib| {
-        exe_tests.root_module.linkLibrary(lib);
-    } else {
-        exe_tests.root_module.linkSystemLibrary("roaring", .{});
-    }
-
-    // A run step that will run the second test executable.
+    const exe_tests = b.addTest(.{ .root_module = exe.root_module });
+    linkCRoaring(exe_tests.root_module, croaring);
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
-    // A top level step for running all tests. dependOn can be called multiple
-    // times and since the two run steps do not depend on one another, this will
-    // make the two of them run in parallel.
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
-
-    // Just like flags, top level steps are also listed in the `--help` menu.
-    //
-    // The Zig build system is entirely implemented in userland, which means
-    // that it cannot hook into private compiler APIs. All compilation work
-    // orchestrated by the build system will result in other Zig compiler
-    // subcommands being invoked with the right flags defined. You can observe
-    // these invocations when one fails (or you pass a flag to increase
-    // verbosity) to validate assumptions and diagnose problems.
-    //
-    // Lastly, the Zig build system is relatively simple and self-contained,
-    // and reading its source code will allow you to master it.
 }
