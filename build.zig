@@ -186,6 +186,7 @@ fn setupCRoaring(
             .flags = &[_][]const u8{
                 "-std=c11",
                 "-O3",
+                "-fno-sanitize=undefined",
                 "-DROARING_EXCEPTIONS=1",
                 "-DCROARING_COMPILER_SUPPORTS_AVX512=0",
             },
@@ -311,4 +312,28 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+
+    // Benchmarks (always ReleaseFast for accurate measurements)
+    const bench = b.addExecutable(.{
+        .name = "bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/bench.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{
+                .{ .name = "rbitz", .module = mod },
+            },
+        }),
+    });
+    linkCRoaring(bench.root_module, croaring);
+    b.installArtifact(bench);
+
+    const run_bench = b.addRunArtifact(bench);
+    run_bench.step.dependOn(b.getInstallStep());
+    if (b.args) |args| {
+        run_bench.addArgs(args);
+    }
+
+    const bench_step = b.step("bench", "Run benchmarks");
+    bench_step.dependOn(&run_bench.step);
 }
