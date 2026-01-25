@@ -5,7 +5,7 @@ fn getVersion(b: *std.Build) []const u8 {
     var exit_code: u8 = 0;
     const git_hash = b.runAllowFail(&[_][]const u8{
         "git", "-C", src_dir, "rev-parse", "HEAD",
-    }, &exit_code, .Inherit) catch return "unknown";
+    }, &exit_code, .inherit) catch return "unknown";
     return std.mem.trim(u8, git_hash, &std.ascii.whitespace);
 }
 
