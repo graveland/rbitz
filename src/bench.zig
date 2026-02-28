@@ -263,7 +263,7 @@ fn formatOpsPerSec(ns: u64) struct { value: f64, unit: []const u8 } {
     }
 }
 
-fn printTextResult(result: BenchmarkResult, buf: []u8) void {
+fn printTextResult(io: std.Io, result: BenchmarkResult, buf: []u8) void {
     const t = formatNanos(result.stats.mean_ns);
     const s = formatNanos(result.stats.std_ns);
     const mem = formatBytes(result.memory.peak_bytes);
@@ -281,52 +281,56 @@ fn printTextResult(result: BenchmarkResult, buf: []u8) void {
         mem.unit,
         result.memory.allocation_count,
     }) catch return;
-    std.fs.File.stdout().writeAll(line) catch {};
+    std.Io.File.stdout().writeStreamingAll(io, line) catch {};
 }
 
-fn printJsonResults(results: []const BenchmarkResult, config: Config, buf: []u8) void {
-    const stdout = std.fs.File.stdout();
+fn printJsonResults(io: std.Io, results: []const BenchmarkResult, config: Config, buf: []u8) void {
+    const w = writeOut;
 
-    stdout.writeAll("{\n") catch return;
+    w(io, "{\n");
     const cfg_line = std.fmt.bufPrint(buf, "  \"config\": {{\"iterations\": {d}, \"warmup\": {d}}},\n", .{ config.iterations, config.warmup }) catch return;
-    stdout.writeAll(cfg_line) catch return;
-    stdout.writeAll("  \"benchmarks\": [\n") catch return;
+    w(io, cfg_line);
+    w(io, "  \"benchmarks\": [\n");
 
     for (results, 0..) |result, i| {
-        stdout.writeAll("    {\n") catch return;
+        w(io, "    {\n");
         const name_line = std.fmt.bufPrint(buf, "      \"name\": \"{s}\",\n", .{result.name}) catch return;
-        stdout.writeAll(name_line) catch return;
+        w(io, name_line);
         const size_line = std.fmt.bufPrint(buf, "      \"size\": \"{s}\",\n", .{result.size.name()}) catch return;
-        stdout.writeAll(size_line) catch return;
-        stdout.writeAll("      \"stats\": {\n") catch return;
+        w(io, size_line);
+        w(io, "      \"stats\": {\n");
         const mean_line = std.fmt.bufPrint(buf, "        \"mean_ns\": {d},\n", .{result.stats.mean_ns}) catch return;
-        stdout.writeAll(mean_line) catch return;
+        w(io, mean_line);
         const std_line = std.fmt.bufPrint(buf, "        \"std_ns\": {d},\n", .{result.stats.std_ns}) catch return;
-        stdout.writeAll(std_line) catch return;
+        w(io, std_line);
         const min_line = std.fmt.bufPrint(buf, "        \"min_ns\": {d},\n", .{result.stats.min_ns}) catch return;
-        stdout.writeAll(min_line) catch return;
+        w(io, min_line);
         const max_line = std.fmt.bufPrint(buf, "        \"max_ns\": {d},\n", .{result.stats.max_ns}) catch return;
-        stdout.writeAll(max_line) catch return;
+        w(io, max_line);
         const median_line = std.fmt.bufPrint(buf, "        \"median_ns\": {d}\n", .{result.stats.median_ns}) catch return;
-        stdout.writeAll(median_line) catch return;
-        stdout.writeAll("      },\n") catch return;
-        stdout.writeAll("      \"memory\": {\n") catch return;
+        w(io, median_line);
+        w(io, "      },\n");
+        w(io, "      \"memory\": {\n");
         const peak_line = std.fmt.bufPrint(buf, "        \"peak_bytes\": {d},\n", .{result.memory.peak_bytes}) catch return;
-        stdout.writeAll(peak_line) catch return;
+        w(io, peak_line);
         const total_line = std.fmt.bufPrint(buf, "        \"total_allocated\": {d},\n", .{result.memory.total_allocated}) catch return;
-        stdout.writeAll(total_line) catch return;
+        w(io, total_line);
         const alloc_line = std.fmt.bufPrint(buf, "        \"allocation_count\": {d}\n", .{result.memory.allocation_count}) catch return;
-        stdout.writeAll(alloc_line) catch return;
-        stdout.writeAll("      }\n") catch return;
+        w(io, alloc_line);
+        w(io, "      }\n");
         if (i < results.len - 1) {
-            stdout.writeAll("    },\n") catch return;
+            w(io, "    },\n");
         } else {
-            stdout.writeAll("    }\n") catch return;
+            w(io, "    }\n");
         }
     }
 
-    stdout.writeAll("  ]\n") catch return;
-    stdout.writeAll("}\n") catch return;
+    w(io, "  ]\n");
+    w(io, "}\n");
+}
+
+fn writeOut(io: std.Io, str: []const u8) void {
+    std.Io.File.stdout().writeStreamingAll(io, str) catch {};
 }
 
 // ============================================================================
@@ -354,6 +358,7 @@ fn runBenchmark(
     setup: SetupFn(Context),
     benchmark: BenchmarkFn(Context),
     teardown: TeardownFn(Context),
+    io: std.Io,
 ) !BenchmarkResult {
     var stats = Stats.init(tracker.backing);
     defer stats.deinit();
@@ -375,9 +380,9 @@ fn runBenchmark(
         tracker.reset();
         var ctx = try setup(tracker.allocator(), size);
 
-        var timer = std.time.Timer.start() catch unreachable;
+        const start = std.Io.Timestamp.now(io, .awake);
         benchmark(&ctx);
-        const elapsed = timer.read();
+        const elapsed: u64 = @intCast(start.durationTo(std.Io.Timestamp.now(io, .awake)).nanoseconds);
 
         total_peak = @max(total_peak, tracker.peak_bytes);
         total_allocated += tracker.bytes_allocated;
@@ -1186,11 +1191,10 @@ const RunOptimizeCtx = struct {
 // CLI Argument Parsing
 // ============================================================================
 
-fn parseArgs(alloc: std.mem.Allocator) !Config {
+fn parseArgs(io: std.Io, process_args: std.process.Args) !Config {
     var config = Config{};
 
-    var args = try std.process.argsWithAllocator(alloc);
-    defer args.deinit();
+    var args = std.process.Args.Iterator.init(process_args);
 
     _ = args.skip();
 
@@ -1215,7 +1219,7 @@ fn parseArgs(alloc: std.mem.Allocator) !Config {
         } else if (std.mem.eql(u8, arg, "--format=text")) {
             config.format = .text;
         } else if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
-            printHelp();
+            printHelp(io);
             std.process.exit(0);
         }
     }
@@ -1223,7 +1227,7 @@ fn parseArgs(alloc: std.mem.Allocator) !Config {
     return config;
 }
 
-fn printHelp() void {
+fn printHelp(io: std.Io) void {
     const help =
         \\RBITZ (Roaring Bitmap) Benchmarks
         \\
@@ -1244,7 +1248,7 @@ fn printHelp() void {
         \\  bench --format=json            Output JSON for tooling
         \\
     ;
-    std.fs.File.stdout().writeAll(help) catch {};
+    std.Io.File.stdout().writeStreamingAll(io, help) catch {};
 }
 
 fn matchesFilter(name: []const u8, filter: ?[]const u8) bool {
@@ -1258,21 +1262,20 @@ fn matchesFilter(name: []const u8, filter: ?[]const u8) bool {
 // Main
 // ============================================================================
 
-fn print(buf: []u8, comptime fmt: []const u8, args: anytype) void {
+fn print(io: std.Io, buf: []u8, comptime fmt: []const u8, args: anytype) void {
     const line = std.fmt.bufPrint(buf, fmt, args) catch return;
-    std.fs.File.stdout().writeAll(line) catch {};
+    std.Io.File.stdout().writeStreamingAll(io, line) catch {};
 }
 
-fn write(str: []const u8) void {
-    std.fs.File.stdout().writeAll(str) catch {};
+fn write(io: std.Io, str: []const u8) void {
+    std.Io.File.stdout().writeStreamingAll(io, str) catch {};
 }
 
-pub fn main() !void {
-    var gpa_state: std.heap.GeneralPurposeAllocator(.{}) = .init;
-    defer _ = gpa_state.deinit();
-    const gpa = gpa_state.allocator();
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const io = init.io;
 
-    const config = try parseArgs(gpa);
+    const config = try parseArgs(io, init.minimal.args);
 
     var results: std.ArrayList(BenchmarkResult) = .empty;
     defer results.deinit(gpa);
@@ -1281,9 +1284,9 @@ pub fn main() !void {
     var buf: [4096]u8 = undefined;
 
     if (config.format == .text) {
-        write("RBITZ (Roaring Bitmap) Benchmarks\n");
-        write("==================================\n");
-        print(&buf, "Config: iterations={d}, warmup={d}\n\n", .{ config.iterations, config.warmup });
+        write(io, "RBITZ (Roaring Bitmap) Benchmarks\n");
+        write(io, "==================================\n");
+        print(io, &buf, "Config: iterations={d}, warmup={d}\n\n", .{ config.iterations, config.warmup });
     }
 
     const sizes = [_]Size{ .small, .medium, .large };
@@ -1293,160 +1296,160 @@ pub fn main() !void {
         if (!enabled) continue;
 
         if (config.format == .text) {
-            print(&buf, "Size: {s} (N={d})\n", .{ size.name(), size.elementCount() });
-            write("------------------------------------------------------------\n");
+            print(io, &buf, "Size: {s} (N={d})\n", .{ size.name(), size.elementCount() });
+            write(io, "------------------------------------------------------------\n");
         }
 
         // Core Operations
         if (matchesFilter("add/sequential", config.filter)) {
-            const r = try runBenchmark(AddSequentialCtx, "add/sequential", size, config, &tracker, AddSequentialCtx.setup, AddSequentialCtx.run, AddSequentialCtx.teardown);
+            const r = try runBenchmark(AddSequentialCtx, "add/sequential", size, config, &tracker, AddSequentialCtx.setup, AddSequentialCtx.run, AddSequentialCtx.teardown, io);
             try results.append(gpa, r);
-            if (config.format == .text) printTextResult(r, &buf);
+            if (config.format == .text) printTextResult(io, r, &buf);
         }
 
         if (matchesFilter("add/random", config.filter)) {
-            const r = try runBenchmark(AddRandomCtx, "add/random", size, config, &tracker, AddRandomCtx.setup, AddRandomCtx.run, AddRandomCtx.teardown);
+            const r = try runBenchmark(AddRandomCtx, "add/random", size, config, &tracker, AddRandomCtx.setup, AddRandomCtx.run, AddRandomCtx.teardown, io);
             try results.append(gpa, r);
-            if (config.format == .text) printTextResult(r, &buf);
+            if (config.format == .text) printTextResult(io, r, &buf);
         }
 
         if (matchesFilter("add/sparse", config.filter)) {
-            const r = try runBenchmark(AddSparseCtx, "add/sparse", size, config, &tracker, AddSparseCtx.setup, AddSparseCtx.run, AddSparseCtx.teardown);
+            const r = try runBenchmark(AddSparseCtx, "add/sparse", size, config, &tracker, AddSparseCtx.setup, AddSparseCtx.run, AddSparseCtx.teardown, io);
             try results.append(gpa, r);
-            if (config.format == .text) printTextResult(r, &buf);
+            if (config.format == .text) printTextResult(io, r, &buf);
         }
 
         if (matchesFilter("addMany", config.filter)) {
-            const r = try runBenchmark(AddManyCtx, "addMany", size, config, &tracker, AddManyCtx.setup, AddManyCtx.run, AddManyCtx.teardown);
+            const r = try runBenchmark(AddManyCtx, "addMany", size, config, &tracker, AddManyCtx.setup, AddManyCtx.run, AddManyCtx.teardown, io);
             try results.append(gpa, r);
-            if (config.format == .text) printTextResult(r, &buf);
+            if (config.format == .text) printTextResult(io, r, &buf);
         }
 
         if (matchesFilter("contains/hit", config.filter)) {
-            const r = try runBenchmark(ContainsHitCtx, "contains/hit", size, config, &tracker, ContainsHitCtx.setup, ContainsHitCtx.run, ContainsHitCtx.teardown);
+            const r = try runBenchmark(ContainsHitCtx, "contains/hit", size, config, &tracker, ContainsHitCtx.setup, ContainsHitCtx.run, ContainsHitCtx.teardown, io);
             try results.append(gpa, r);
-            if (config.format == .text) printTextResult(r, &buf);
+            if (config.format == .text) printTextResult(io, r, &buf);
         }
 
         if (matchesFilter("contains/miss", config.filter)) {
-            const r = try runBenchmark(ContainsMissCtx, "contains/miss", size, config, &tracker, ContainsMissCtx.setup, ContainsMissCtx.run, ContainsMissCtx.teardown);
+            const r = try runBenchmark(ContainsMissCtx, "contains/miss", size, config, &tracker, ContainsMissCtx.setup, ContainsMissCtx.run, ContainsMissCtx.teardown, io);
             try results.append(gpa, r);
-            if (config.format == .text) printTextResult(r, &buf);
+            if (config.format == .text) printTextResult(io, r, &buf);
         }
 
         if (matchesFilter("remove/sequential", config.filter)) {
-            const r = try runBenchmark(RemoveSequentialCtx, "remove/sequential", size, config, &tracker, RemoveSequentialCtx.setup, RemoveSequentialCtx.run, RemoveSequentialCtx.teardown);
+            const r = try runBenchmark(RemoveSequentialCtx, "remove/sequential", size, config, &tracker, RemoveSequentialCtx.setup, RemoveSequentialCtx.run, RemoveSequentialCtx.teardown, io);
             try results.append(gpa, r);
-            if (config.format == .text) printTextResult(r, &buf);
+            if (config.format == .text) printTextResult(io, r, &buf);
         }
 
         if (matchesFilter("remove/random", config.filter)) {
-            const r = try runBenchmark(RemoveRandomCtx, "remove/random", size, config, &tracker, RemoveRandomCtx.setup, RemoveRandomCtx.run, RemoveRandomCtx.teardown);
+            const r = try runBenchmark(RemoveRandomCtx, "remove/random", size, config, &tracker, RemoveRandomCtx.setup, RemoveRandomCtx.run, RemoveRandomCtx.teardown, io);
             try results.append(gpa, r);
-            if (config.format == .text) printTextResult(r, &buf);
+            if (config.format == .text) printTextResult(io, r, &buf);
         }
 
         // Range Operations
         if (matchesFilter("addRange/small", config.filter)) {
-            const r = try runBenchmark(AddRangeCtx, "addRange/small", size, config, &tracker, AddRangeCtx.setup, AddRangeCtx.run, AddRangeCtx.teardown);
+            const r = try runBenchmark(AddRangeCtx, "addRange/small", size, config, &tracker, AddRangeCtx.setup, AddRangeCtx.run, AddRangeCtx.teardown, io);
             try results.append(gpa, r);
-            if (config.format == .text) printTextResult(r, &buf);
+            if (config.format == .text) printTextResult(io, r, &buf);
         }
 
         if (matchesFilter("addRange/large", config.filter)) {
-            const r = try runBenchmark(AddRangeLargeCtx, "addRange/large", size, config, &tracker, AddRangeLargeCtx.setup, AddRangeLargeCtx.run, AddRangeLargeCtx.teardown);
+            const r = try runBenchmark(AddRangeLargeCtx, "addRange/large", size, config, &tracker, AddRangeLargeCtx.setup, AddRangeLargeCtx.run, AddRangeLargeCtx.teardown, io);
             try results.append(gpa, r);
-            if (config.format == .text) printTextResult(r, &buf);
+            if (config.format == .text) printTextResult(io, r, &buf);
         }
 
         if (matchesFilter("containsRange", config.filter)) {
-            const r = try runBenchmark(ContainsRangeHitCtx, "containsRange", size, config, &tracker, ContainsRangeHitCtx.setup, ContainsRangeHitCtx.run, ContainsRangeHitCtx.teardown);
+            const r = try runBenchmark(ContainsRangeHitCtx, "containsRange", size, config, &tracker, ContainsRangeHitCtx.setup, ContainsRangeHitCtx.run, ContainsRangeHitCtx.teardown, io);
             try results.append(gpa, r);
-            if (config.format == .text) printTextResult(r, &buf);
+            if (config.format == .text) printTextResult(io, r, &buf);
         }
 
         if (matchesFilter("removeRange", config.filter)) {
-            const r = try runBenchmark(RemoveRangeCtx, "removeRange", size, config, &tracker, RemoveRangeCtx.setup, RemoveRangeCtx.run, RemoveRangeCtx.teardown);
+            const r = try runBenchmark(RemoveRangeCtx, "removeRange", size, config, &tracker, RemoveRangeCtx.setup, RemoveRangeCtx.run, RemoveRangeCtx.teardown, io);
             try results.append(gpa, r);
-            if (config.format == .text) printTextResult(r, &buf);
+            if (config.format == .text) printTextResult(io, r, &buf);
         }
 
         // Set Operations
         if (matchesFilter("union", config.filter)) {
-            const r = try runBenchmark(UnionCtx, "union", size, config, &tracker, UnionCtx.setup, UnionCtx.run, UnionCtx.teardown);
+            const r = try runBenchmark(UnionCtx, "union", size, config, &tracker, UnionCtx.setup, UnionCtx.run, UnionCtx.teardown, io);
             try results.append(gpa, r);
-            if (config.format == .text) printTextResult(r, &buf);
+            if (config.format == .text) printTextResult(io, r, &buf);
         }
 
         if (matchesFilter("unionInplace", config.filter)) {
-            const r = try runBenchmark(UnionInplaceCtx, "unionInplace", size, config, &tracker, UnionInplaceCtx.setup, UnionInplaceCtx.run, UnionInplaceCtx.teardown);
+            const r = try runBenchmark(UnionInplaceCtx, "unionInplace", size, config, &tracker, UnionInplaceCtx.setup, UnionInplaceCtx.run, UnionInplaceCtx.teardown, io);
             try results.append(gpa, r);
-            if (config.format == .text) printTextResult(r, &buf);
+            if (config.format == .text) printTextResult(io, r, &buf);
         }
 
         if (matchesFilter("intersection", config.filter)) {
-            const r = try runBenchmark(IntersectionCtx, "intersection", size, config, &tracker, IntersectionCtx.setup, IntersectionCtx.run, IntersectionCtx.teardown);
+            const r = try runBenchmark(IntersectionCtx, "intersection", size, config, &tracker, IntersectionCtx.setup, IntersectionCtx.run, IntersectionCtx.teardown, io);
             try results.append(gpa, r);
-            if (config.format == .text) printTextResult(r, &buf);
+            if (config.format == .text) printTextResult(io, r, &buf);
         }
 
         if (matchesFilter("difference", config.filter)) {
-            const r = try runBenchmark(DifferenceCtx, "difference", size, config, &tracker, DifferenceCtx.setup, DifferenceCtx.run, DifferenceCtx.teardown);
+            const r = try runBenchmark(DifferenceCtx, "difference", size, config, &tracker, DifferenceCtx.setup, DifferenceCtx.run, DifferenceCtx.teardown, io);
             try results.append(gpa, r);
-            if (config.format == .text) printTextResult(r, &buf);
+            if (config.format == .text) printTextResult(io, r, &buf);
         }
 
         if (matchesFilter("xor", config.filter)) {
-            const r = try runBenchmark(XorCtx, "xor", size, config, &tracker, XorCtx.setup, XorCtx.run, XorCtx.teardown);
+            const r = try runBenchmark(XorCtx, "xor", size, config, &tracker, XorCtx.setup, XorCtx.run, XorCtx.teardown, io);
             try results.append(gpa, r);
-            if (config.format == .text) printTextResult(r, &buf);
+            if (config.format == .text) printTextResult(io, r, &buf);
         }
 
         // Traversal
         if (matchesFilter("iterator", config.filter)) {
-            const r = try runBenchmark(IteratorCtx, "iterator", size, config, &tracker, IteratorCtx.setup, IteratorCtx.run, IteratorCtx.teardown);
+            const r = try runBenchmark(IteratorCtx, "iterator", size, config, &tracker, IteratorCtx.setup, IteratorCtx.run, IteratorCtx.teardown, io);
             try results.append(gpa, r);
-            if (config.format == .text) printTextResult(r, &buf);
+            if (config.format == .text) printTextResult(io, r, &buf);
         }
 
         if (matchesFilter("toArray", config.filter)) {
-            const r = try runBenchmark(ToArrayCtx, "toArray", size, config, &tracker, ToArrayCtx.setup, ToArrayCtx.run, ToArrayCtx.teardown);
+            const r = try runBenchmark(ToArrayCtx, "toArray", size, config, &tracker, ToArrayCtx.setup, ToArrayCtx.run, ToArrayCtx.teardown, io);
             try results.append(gpa, r);
-            if (config.format == .text) printTextResult(r, &buf);
+            if (config.format == .text) printTextResult(io, r, &buf);
         }
 
         if (matchesFilter("cardinality", config.filter)) {
-            const r = try runBenchmark(CardinalityCtx, "cardinality", size, config, &tracker, CardinalityCtx.setup, CardinalityCtx.run, CardinalityCtx.teardown);
+            const r = try runBenchmark(CardinalityCtx, "cardinality", size, config, &tracker, CardinalityCtx.setup, CardinalityCtx.run, CardinalityCtx.teardown, io);
             try results.append(gpa, r);
-            if (config.format == .text) printTextResult(r, &buf);
+            if (config.format == .text) printTextResult(io, r, &buf);
         }
 
         // Serialization
         if (matchesFilter("serialize", config.filter)) {
-            const r = try runBenchmark(SerializeCtx, "serialize", size, config, &tracker, SerializeCtx.setup, SerializeCtx.run, SerializeCtx.teardown);
+            const r = try runBenchmark(SerializeCtx, "serialize", size, config, &tracker, SerializeCtx.setup, SerializeCtx.run, SerializeCtx.teardown, io);
             try results.append(gpa, r);
-            if (config.format == .text) printTextResult(r, &buf);
+            if (config.format == .text) printTextResult(io, r, &buf);
         }
 
         if (matchesFilter("deserialize", config.filter)) {
-            const r = try runBenchmark(DeserializeCtx, "deserialize", size, config, &tracker, DeserializeCtx.setup, DeserializeCtx.run, DeserializeCtx.teardown);
+            const r = try runBenchmark(DeserializeCtx, "deserialize", size, config, &tracker, DeserializeCtx.setup, DeserializeCtx.run, DeserializeCtx.teardown, io);
             try results.append(gpa, r);
-            if (config.format == .text) printTextResult(r, &buf);
+            if (config.format == .text) printTextResult(io, r, &buf);
         }
 
         // Optimization
         if (matchesFilter("runOptimize", config.filter)) {
-            const r = try runBenchmark(RunOptimizeCtx, "runOptimize", size, config, &tracker, RunOptimizeCtx.setup, RunOptimizeCtx.run, RunOptimizeCtx.teardown);
+            const r = try runBenchmark(RunOptimizeCtx, "runOptimize", size, config, &tracker, RunOptimizeCtx.setup, RunOptimizeCtx.run, RunOptimizeCtx.teardown, io);
             try results.append(gpa, r);
-            if (config.format == .text) printTextResult(r, &buf);
+            if (config.format == .text) printTextResult(io, r, &buf);
         }
 
         if (config.format == .text) {
-            write("\n");
+            write(io, "\n");
         }
     }
 
     if (config.format == .json) {
-        printJsonResults(results.items, config, &buf);
+        printJsonResults(io, results.items, config, &buf);
     }
 }

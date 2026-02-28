@@ -2,7 +2,7 @@
     .name = .rbitz,
     .version = "0.0.0",
     .fingerprint = 0x689aaf45a9cc45e9,
-    .minimum_zig_version = "0.16.0-dev.2296+fd3657bf8",
+    .minimum_zig_version = "0.16.0-dev.2676+4e2cec265",
     .dependencies = .{
         .croaring = .{
             .url = "git+https://github.com/RoaringBitmap/CRoaring.git#v4.5.1",
